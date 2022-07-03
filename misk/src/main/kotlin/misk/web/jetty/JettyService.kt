@@ -263,8 +263,9 @@ class JettyService @Inject internal constructor(
       // GET is enabled by default for gzipHandler.
       gzipHandler.addExcludedMethods("GET")
     }
-    gzipHandler.inflateBufferSize = 8192
+//    gzipHandler.inflateBufferSize = 8192
     servletContextHandler.insertHandler(gzipHandler)
+//    servletContextHandler.gzipHandler = gzipHandler
 
     server.handler = statisticsHandler
 

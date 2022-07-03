@@ -1,5 +1,7 @@
 package misk.web
 
+import com.google.common.util.concurrent.Service
+import com.google.inject.Key
 import com.google.inject.Provider
 import com.google.inject.Provides
 import com.google.inject.TypeLiteral
@@ -20,6 +22,7 @@ import misk.ServiceModule
 import misk.exceptions.WebActionException
 import misk.grpc.GrpcFeatureBinding
 import misk.inject.KAbstractModule
+import misk.inject.toKey
 import misk.queuing.TimedBlockingQueue
 import misk.scope.ActionScopedProvider
 import misk.scope.ActionScopedProviderModule
@@ -34,17 +37,22 @@ import misk.web.exceptions.EofExceptionMapper
 import misk.web.exceptions.ExceptionHandlingInterceptor
 import misk.web.exceptions.ExceptionMapperModule
 import misk.web.exceptions.IOExceptionMapper
+import misk.web.exceptions.RequestBodyExceptionMapper
 import misk.web.exceptions.WebActionExceptionMapper
 import misk.web.extractors.FormValueFeatureBinding
 import misk.web.extractors.PathParamFeatureBinding
 import misk.web.extractors.QueryParamFeatureBinding
+import misk.web.extractors.RequestBodyException
 import misk.web.extractors.RequestBodyFeatureBinding
 import misk.web.extractors.RequestHeadersFeatureBinding
 import misk.web.extractors.ResponseBodyFeatureBinding
 import misk.web.extractors.WebSocketFeatureBinding
 import misk.web.extractors.WebSocketListenerFeatureBinding
+import misk.web.interceptors.BeforeContentEncoding
 import misk.web.interceptors.ConcurrencyLimiterFactory
 import misk.web.interceptors.ConcurrencyLimitsInterceptor
+import misk.web.interceptors.ForContentEncoding
+import misk.web.interceptors.GunzipRequestBodyInterceptor
 import misk.web.interceptors.InternalErrorInterceptorFactory
 import misk.web.interceptors.MetricsInterceptor
 import misk.web.interceptors.RebalancingInterceptor
@@ -81,12 +89,15 @@ import org.eclipse.jetty.util.thread.ExecutorThreadPool
 import org.eclipse.jetty.util.thread.QueuedThreadPool
 import org.eclipse.jetty.util.thread.ThreadPool
 
-class MiskWebModule(private val config: WebConfig) : KAbstractModule() {
+class MiskWebModule(
+  private val config: WebConfig,
+  private val jettyDependsOn: List<Key<out Service>> = emptyList(),
+) : KAbstractModule() {
   override fun configure() {
     bind<WebConfig>().toInstance(config)
     bind<ActionExceptionLogLevelConfig>().toInstance(config.action_exception_log_level)
 
-    install(ServiceModule<JettyService>())
+    install(ServiceModule(key = JettyService::class.toKey(), dependsOn = jettyDependsOn))
     install(ServiceModule<JettyThreadPoolMetricsCollector>())
     install(ServiceModule<JettyConnectionMetricsCollector>())
 
@@ -129,6 +140,12 @@ class MiskWebModule(private val config: WebConfig) : KAbstractModule() {
     // Register built-in interceptors. Interceptors run in the order in which they are
     // installed, and the order of these interceptors is critical.
 
+    newMultibinder<NetworkInterceptor.Factory>(BeforeContentEncoding::class)
+
+    // Inflates a gzip compressed request
+    multibind<NetworkInterceptor.Factory>(ForContentEncoding::class)
+      .to<GunzipRequestBodyInterceptor.Factory>()
+
     multibind<NetworkInterceptor.Factory>(MiskDefault::class)
       .to<RebalancingInterceptor.Factory>()
 
@@ -167,9 +184,12 @@ class MiskWebModule(private val config: WebConfig) : KAbstractModule() {
     multibind<ApplicationInterceptor.Factory>(MiskDefault::class)
       .to<RequestBodyLoggingInterceptor.Factory>()
 
+    newMultibinder<WebActionSeedDataTransformerFactory>()
+
     install(ExceptionMapperModule.create<WebActionException, WebActionExceptionMapper>())
     install(ExceptionMapperModule.create<IOException, IOExceptionMapper>())
     install(ExceptionMapperModule.create<EofException, EofExceptionMapper>())
+    install(ExceptionMapperModule.create<RequestBodyException, RequestBodyExceptionMapper>())
 
     // Register built-in feature bindings.
     multibind<FeatureBinding.Factory>().toInstance(PathParamFeatureBinding.Factory)

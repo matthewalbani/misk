@@ -5,11 +5,13 @@ import com.google.common.base.Ticker
 import com.squareup.wire.GrpcMethod
 import io.prometheus.client.Histogram
 import io.prometheus.client.Summary
+import misk.metrics.backends.prometheus.PrometheusConfig
 import misk.metrics.v2.Metrics
 import okhttp3.Interceptor
 import okhttp3.Response
 import retrofit2.Invocation
 import java.net.SocketTimeoutException
+import java.net.URL
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -53,15 +55,22 @@ class ClientMetricsInterceptor private constructor(
     val grpcMethod = chain.request().tag(GrpcMethod::class.java)
     if (grpcMethod != null) return "$clientName.${grpcMethod.path.substringAfterLast("/")}"
 
+    val url = chain.request().tag(URL::class.java)
+    if (url != null) return "$clientName.${url.path.trim('/').replace('/', '.')}"
+
     return null
   }
 
   @Singleton
-  class Factory @Inject internal constructor(m: Metrics) {
+  class Factory @Inject internal constructor(
+    m: Metrics,
+    config: PrometheusConfig,
+  ) {
     internal val requestDuration = m.summary(
       name = "client_http_request_latency_ms",
       help = "count and duration in ms of outgoing client requests",
-      labelNames = listOf("action", "code")
+      labelNames = listOf("action", "code"),
+      maxAgeSeconds = config.max_age_in_seconds,
     )
     internal val requestDurationHistogram = m.histogram(
       name = "histo_client_http_request_latency_ms",
